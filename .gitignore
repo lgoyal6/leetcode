@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Compiled
+*.class
+a.out
+*.o
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
