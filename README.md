@@ -24,6 +24,12 @@ python3 lc.py sync
 ## Why this exists
 Tying the daily-commit habit to LeetCode means the streak *forces* real practice — the commit is a side effect of doing the work, not the goal. If a day is green here, I earned it.
 
+## My LeetCode profile (live from leetcode.com)
+
+<!-- STATS:START -->
+_Run `python3 lc.py stats <your-leetcode-username>` to mirror your real solved-count here._
+<!-- STATS:END -->
+
 ## Progress
 
 <!-- PROGRESS:START -->

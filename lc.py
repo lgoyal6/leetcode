@@ -13,16 +13,23 @@ Commands:
   python3 lc.py sync
       Rescan solutions/ and rebuild the README progress table.
 
+  python3 lc.py stats [username]
+      Pull your REAL leetcode.com solved-counts (read-only, no login) into the
+      README. Username is saved after the first run, so later just `lc.py stats`.
+
 Examples:
   python3 lc.py new 1 two-sum easy
   python3 lc.py new 146 lru-cache hard cpp
   python3 lc.py sync
+  python3 lc.py stats your-leetcode-username
 """
 
 from __future__ import annotations
 
 import json
 import sys
+import urllib.error
+import urllib.request
 from datetime import date
 from pathlib import Path
 
@@ -32,6 +39,9 @@ README = ROOT / "README.md"
 
 START = "<!-- PROGRESS:START -->"
 END = "<!-- PROGRESS:END -->"
+STATS_START = "<!-- STATS:START -->"
+STATS_END = "<!-- STATS:END -->"
+CONFIG = ROOT / ".lcconfig.json"
 
 LANG_EXT = {"py": "py", "cpp": "cpp", "java": "java"}
 DIFF_LABEL = {"easy": "🟢 Easy", "medium": "🟡 Medium", "hard": "🔴 Hard"}
@@ -197,15 +207,103 @@ def build_table(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def sync() -> None:
-    table = build_table(collect())
+def replace_block(start: str, end: str, content: str) -> None:
     text = README.read_text()
-    if START not in text or END not in text:
-        die(f"README.md is missing the {START} / {END} markers")
-    pre = text.split(START)[0]
-    post = text.split(END)[1]
-    README.write_text(f"{pre}{START}\n{table}\n{END}{post}")
+    if start not in text or end not in text:
+        die(f"README.md is missing the {start} / {end} markers")
+    pre = text.split(start)[0]
+    post = text.split(end)[1]
+    README.write_text(f"{pre}{start}\n{content}\n{end}{post}")
+
+
+def sync() -> None:
+    replace_block(START, END, build_table(collect()))
     print("Updated README progress table.")
+
+
+# ---------------------------------------------------------------------------
+# `stats`: mirror your REAL leetcode.com profile counts into the README.
+# Read-only, username only, no login/cookie — it just reflects your app progress.
+# ---------------------------------------------------------------------------
+def load_config() -> dict:
+    if CONFIG.exists():
+        try:
+            return json.loads(CONFIG.read_text())
+        except (ValueError, OSError):
+            return {}
+    return {}
+
+
+def save_config(**updates) -> None:
+    cfg = load_config()
+    cfg.update(updates)
+    CONFIG.write_text(json.dumps(cfg, indent=2) + "\n")
+
+
+def fetch_leetcode_stats(username: str) -> dict | None:
+    query = """
+    query userStats($username: String!) {
+      allQuestionsCount { difficulty count }
+      matchedUser(username: $username) {
+        profile { ranking }
+        submitStatsGlobal { acSubmissionNum { difficulty count } }
+      }
+    }
+    """
+    body = json.dumps({"query": query, "variables": {"username": username}}).encode()
+    req = urllib.request.Request(
+        "https://leetcode.com/graphql",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Referer": "https://leetcode.com",
+            "User-Agent": "Mozilla/5.0 (leetcode-practice-repo)",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            payload = json.loads(resp.read().decode())
+    except (urllib.error.URLError, ValueError, TimeoutError) as exc:
+        die(f"could not reach LeetCode: {exc}")
+    matched = (payload.get("data") or {}).get("matchedUser")
+    if not matched:
+        return None
+    totals = {d["difficulty"]: d["count"] for d in payload["data"].get("allQuestionsCount", [])}
+    solved = {d["difficulty"]: d["count"] for d in matched["submitStatsGlobal"]["acSubmissionNum"]}
+    return {
+        "username": username,
+        "ranking": (matched.get("profile") or {}).get("ranking"),
+        "solved": solved,
+        "totals": totals,
+    }
+
+
+def build_stats_block(s: dict) -> str:
+    solved, totals = s["solved"], s["totals"]
+
+    def frac(diff: str) -> str:
+        return f"{solved.get(diff, 0)}/{totals.get(diff, 0)}"
+
+    rank = f"  ·  Rank ~{s['ranking']:,}" if s.get("ranking") else ""
+    return (
+        f"**[{s['username']}](https://leetcode.com/u/{s['username']}/)** — "
+        f"Solved **{solved.get('All', 0)}/{totals.get('All', 0)}**  ·  "
+        f"🟢 {frac('Easy')}  ·  🟡 {frac('Medium')}  ·  🔴 {frac('Hard')}{rank}\n\n"
+        f"_Live from leetcode.com · last synced {date.today().isoformat()} "
+        f"· run `python3 lc.py stats` to refresh_"
+    )
+
+
+def cmd_stats(args: list[str]) -> None:
+    username = (args[0].strip() if args else "") or load_config().get("username", "")
+    if not username:
+        die("usage: python3 lc.py stats <your-leetcode-username>  (saved for next time)")
+    stats = fetch_leetcode_stats(username)
+    if not stats:
+        die(f"LeetCode user {username!r} not found (or the profile is private)")
+    save_config(username=username)
+    replace_block(STATS_START, STATS_END, build_stats_block(stats))
+    print(f"Synced {username}: {stats['solved'].get('All', 0)} solved on leetcode.com.")
 
 
 def main() -> None:
@@ -217,8 +315,10 @@ def main() -> None:
         cmd_new(sys.argv[2:])
     elif cmd == "sync":
         sync()
+    elif cmd == "stats":
+        cmd_stats(sys.argv[2:])
     else:
-        die(f"unknown command {cmd!r} (expected: new, sync)")
+        die(f"unknown command {cmd!r} (expected: new, sync, stats)")
 
 
 if __name__ == "__main__":
