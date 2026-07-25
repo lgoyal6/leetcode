@@ -10,6 +10,10 @@ Commands:
       difficulty: easy | medium | hard   (default: medium)
       lang:       py | cpp | java         (default: py)
 
+  python3 lc.py done <number> <slug>
+      After you've written your solution + notes: refresh the table and
+      git add + commit + push in one step (commit message "solve N. Title").
+
   python3 lc.py sync
       Rescan solutions/ and rebuild the README progress table.
 
@@ -27,6 +31,8 @@ Examples:
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -306,6 +312,40 @@ def cmd_stats(args: list[str]) -> None:
     print(f"Synced {username}: {stats['solved'].get('All', 0)} solved on leetcode.com.")
 
 
+# ---------------------------------------------------------------------------
+# `done`: one command to commit + push a problem you just solved.
+# You run it (it's your solve) -> genuine commit. Set LC_NO_PUSH=1 to skip push.
+# ---------------------------------------------------------------------------
+def cmd_done(args: list[str]) -> None:
+    if len(args) < 2:
+        die("usage: python3 lc.py done <number> <slug>")
+    try:
+        number = int(args[0])
+    except ValueError:
+        die("<number> must be an integer")
+    slug = args[1].strip().lower()
+    folder = SOL / folder_name(number, slug)
+    if not folder.exists():
+        die(f"{folder.relative_to(ROOT)} not found — run `python3 lc.py new {number} {slug}` first")
+
+    try:
+        title = json.loads((folder / "meta.json").read_text()).get("title")
+    except (ValueError, OSError):
+        title = None
+    title = title or slug.replace("-", " ").title()
+
+    sync()  # keep the progress table current
+    subprocess.run(["git", "add", "-A"], cwd=ROOT, check=True)
+    commit = subprocess.run(["git", "commit", "-m", f"solve {number}. {title}"], cwd=ROOT)
+    if commit.returncode != 0:
+        die("nothing new to commit — did you save your solution/notes?")
+    if os.environ.get("LC_NO_PUSH"):
+        print(f"Committed (push skipped): solve {number}. {title}")
+        return
+    subprocess.run(["git", "push"], cwd=ROOT, check=True)
+    print(f"✅ Committed & pushed: solve {number}. {title}")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -317,8 +357,10 @@ def main() -> None:
         sync()
     elif cmd == "stats":
         cmd_stats(sys.argv[2:])
+    elif cmd == "done":
+        cmd_done(sys.argv[2:])
     else:
-        die(f"unknown command {cmd!r} (expected: new, sync, stats)")
+        die(f"unknown command {cmd!r} (expected: new, done, sync, stats)")
 
 
 if __name__ == "__main__":
