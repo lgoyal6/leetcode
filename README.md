@@ -27,7 +27,9 @@ Tying the daily-commit habit to LeetCode means the streak *forces* real practice
 ## My LeetCode profile (live from leetcode.com)
 
 <!-- STATS:START -->
-_Run `python3 lc.py stats <your-leetcode-username>` to mirror your real solved-count here._
+**[Lgoyal6](https://leetcode.com/u/Lgoyal6/)** — Solved **2/3999**  ·  🟢 2/955  ·  🟡 0/2089  ·  🔴 0/955  ·  Rank ~5,000,001
+
+_Live from leetcode.com · last synced 2026-07-25 · run `python3 lc.py stats` to refresh_
 <!-- STATS:END -->
 
 ## Progress
