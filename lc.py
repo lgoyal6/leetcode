@@ -10,6 +10,12 @@ Commands:
       difficulty: easy | medium | hard   (default: medium)
       lang:       py | cpp | java         (default: py)
 
+  python3 lc.py pull [slug]
+      Fetch your latest accepted LeetCode submission into a new folder (number +
+      difficulty auto-detected). If LEETCODE_SESSION is set locally, your actual
+      code is pulled in too; otherwise a template is left for you to paste into.
+      `pull --list` shows your recent accepted problems.
+
   python3 lc.py done <number> <slug>
       After you've written your solution + notes: refresh the table and
       git add + commit + push in one step (commit message "solve N. Title").
@@ -346,6 +352,174 @@ def cmd_done(args: list[str]) -> None:
     print(f"✅ Committed & pushed: solve {number}. {title}")
 
 
+# ---------------------------------------------------------------------------
+# `pull`: fetch your latest accepted LeetCode submission into the repo.
+# Metadata (number/difficulty) is public; the CODE needs your login cookie
+# (LEETCODE_SESSION) set locally via env var or a git-ignored .lcsecret.json.
+# You still run `lc.py done` to commit — this just removes the copy-paste.
+# ---------------------------------------------------------------------------
+LANG_TO_EXT = {
+    "python3": "py", "python": "py", "cpp": "cpp", "c": "c", "java": "java",
+    "javascript": "js", "typescript": "ts", "golang": "go", "kotlin": "kt",
+    "swift": "swift", "rust": "rs", "ruby": "rb", "csharp": "cs", "scala": "scala",
+    "php": "php", "dart": "dart", "elixir": "ex", "erlang": "erl", "racket": "rkt",
+}
+COMMENT_HASH = {"py", "rb", "ex", "erl"}
+
+
+def _leetcode_creds() -> tuple:
+    session = os.environ.get("LEETCODE_SESSION")
+    csrf = os.environ.get("LEETCODE_CSRF")
+    secret = ROOT / ".lcsecret.json"
+    if not session and secret.exists():
+        try:
+            data = json.loads(secret.read_text())
+            session = data.get("leetcode_session")
+            csrf = csrf or data.get("csrf")
+        except (ValueError, OSError):
+            pass
+    return session, csrf
+
+
+def _gql(query: str, variables: dict, authed: bool = False):
+    headers = {
+        "Content-Type": "application/json",
+        "Referer": "https://leetcode.com",
+        "User-Agent": "Mozilla/5.0 (leetcode-practice-repo)",
+    }
+    if authed:
+        session, csrf = _leetcode_creds()
+        if not session:
+            return None
+        cookie = f"LEETCODE_SESSION={session}"
+        if csrf:
+            cookie += f"; csrftoken={csrf}"
+            headers["x-csrftoken"] = csrf
+        headers["Cookie"] = cookie
+    req = urllib.request.Request(
+        "https://leetcode.com/graphql",
+        data=json.dumps({"query": query, "variables": variables}).encode(),
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            return json.loads(resp.read().decode())
+    except (urllib.error.URLError, ValueError, TimeoutError):
+        return None
+
+
+def _fetch_recent_ac(username: str, limit: int = 20) -> list:
+    q = ("query recentAc($u:String!,$n:Int!){recentAcSubmissionList(username:$u,limit:$n)"
+         "{id title titleSlug timestamp}}")
+    data = _gql(q, {"u": username, "n": limit})
+    if data is None:
+        die("could not reach LeetCode (network/API).")
+    return (data.get("data") or {}).get("recentAcSubmissionList") or []
+
+
+def _fetch_question_meta(slug: str) -> dict:
+    q = "query q($s:String!){question(titleSlug:$s){questionFrontendId title difficulty}}"
+    data = _gql(q, {"s": slug})
+    node = (data or {}).get("data", {}).get("question") if data else None
+    if not node:
+        die(f"could not fetch metadata for {slug!r}")
+    return node
+
+
+def _fetch_submission_code(submission_id: int):
+    session, _ = _leetcode_creds()
+    if not session:
+        return None
+    q = ("query sd($id:Int!){submissionDetails(submissionId:$id)"
+         "{code lang{name} runtimeDisplay memoryDisplay}}")
+    data = _gql(q, {"id": submission_id}, authed=True)
+    sd = (data or {}).get("data", {}).get("submissionDetails") if data else None
+    if not sd or not sd.get("code"):
+        return None
+    return {
+        "code": sd["code"],
+        "lang": (sd.get("lang") or {}).get("name", "python3"),
+        "runtime": sd.get("runtimeDisplay"),
+        "memory": sd.get("memoryDisplay"),
+    }
+
+
+def cmd_pull(args: list[str]) -> None:
+    username = load_config().get("username")
+    if not username:
+        die("run `python3 lc.py stats <your-username>` once first to save your username")
+
+    recent = _fetch_recent_ac(username)
+    if not recent:
+        die(f"no recent accepted submissions found for {username!r}")
+
+    if args and args[0] in ("--list", "-l"):
+        print(f"Recent accepted submissions for {username}:")
+        for s in recent:
+            print(f"  - {s['titleSlug']}   (submission {s['id']})")
+        print("\nPull one with:  python3 lc.py pull <slug>   (or just `pull` for the latest)")
+        return
+
+    if args:
+        slug = args[0].strip().lower()
+        sub = next((s for s in recent if s["titleSlug"] == slug), None)
+        if not sub:
+            die(f"{slug!r} isn't in your recent accepted list — try `python3 lc.py pull --list`")
+    else:
+        sub = recent[0]
+        slug = sub["titleSlug"]
+
+    meta = _fetch_question_meta(slug)
+    number = int(meta["questionFrontendId"])
+    title = meta["title"]
+    difficulty = meta["difficulty"].lower()
+    if difficulty not in DIFF_LABEL:
+        difficulty = "medium"
+
+    folder = SOL / folder_name(number, slug)
+    if folder.exists():
+        die(f"{folder.relative_to(ROOT)} already exists — you've already pulled this one")
+
+    code_info = _fetch_submission_code(int(sub["id"]))
+    folder.mkdir(parents=True)
+
+    if code_info:
+        ext = LANG_TO_EXT.get(code_info["lang"], "py")
+        prefix = "#" if ext in COMMENT_HASH else "//"
+        header = f"{prefix} {number}. {title} — https://leetcode.com/problems/{slug}/\n\n"
+        (folder / f"solution.{ext}").write_text(header + code_info["code"].rstrip() + "\n")
+        code_status = f"pulled your accepted {code_info['lang']} submission"
+        if code_info.get("runtime"):
+            code_status += f" (runtime {code_info['runtime']}, memory {code_info['memory']})"
+    else:
+        ext = "py"
+        (folder / "solution.py").write_text(
+            SOLUTION_TEMPLATES["py"].format(num=number, title=title, slug=slug)
+        )
+        code_status = ("NO code pulled — set LEETCODE_SESSION to auto-fill (see README); "
+                       "paste your solution manually for now")
+
+    (folder / "notes.md").write_text(
+        NOTES_TEMPLATE.format(
+            num=number, title=title, slug=slug,
+            difficulty=DIFF_LABEL[difficulty], today=date.today().isoformat(),
+        )
+    )
+    (folder / "meta.json").write_text(
+        json.dumps(
+            {"number": number, "slug": slug, "title": title,
+             "difficulty": difficulty, "lang": ext, "created": date.today().isoformat()},
+            indent=2,
+        )
+    )
+    sync()
+    rel = folder.relative_to(ROOT)
+    print(f"Pulled {number}. {title}  [{difficulty}]  ->  {rel}/")
+    print(f"  code: {code_status}")
+    print(f"  next: skim the solution, add your notes in {rel}/notes.md, then:")
+    print(f"        python3 lc.py done {number} {slug}")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -359,8 +533,10 @@ def main() -> None:
         cmd_stats(sys.argv[2:])
     elif cmd == "done":
         cmd_done(sys.argv[2:])
+    elif cmd == "pull":
+        cmd_pull(sys.argv[2:])
     else:
-        die(f"unknown command {cmd!r} (expected: new, done, sync, stats)")
+        die(f"unknown command {cmd!r} (expected: new, pull, done, sync, stats)")
 
 
 if __name__ == "__main__":

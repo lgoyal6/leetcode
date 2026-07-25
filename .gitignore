@@ -13,3 +13,6 @@ a.out
 .DS_Store
 .idea/
 .vscode/
+
+# LeetCode login cookie for `lc.py pull` — NEVER commit this (account access!)
+.lcsecret.json

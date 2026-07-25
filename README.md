@@ -2,24 +2,37 @@
 
 Daily, genuine practice. **One problem → real notes → one commit.** No bots, no padding — every green square here is a problem I actually solved.
 
-## Workflow (two commands)
+## Daily workflow
 
-**1. Start a problem** — scaffolds the folder, solution stub, and a notes template:
+**Fastest — right after you solve on leetcode.com:**
 ```bash
-python3 lc.py new 1 two-sum easy
-#            └ number └ slug (from the URL) └ easy|medium|hard  [optional: py|cpp|java]
-```
-Then solve it in `solutions/0001-two-sum/solution.py` and fill in `notes.md` (approach, complexity, what tripped you up — this is where the real learning sticks).
-
-**2. Commit it** (the `new` command prints this exact line for you):
-```bash
-git add . && git commit -m "solve 1. Two Sum" && git push
+python3 lc.py pull                 # pulls your latest accepted solve (code + metadata) into a folder
+#                                  #   ...then add your notes in the new solutions/.../notes.md
+python3 lc.py done <number> <slug> # commit + push in one step
 ```
 
-Refactored an old one or edited notes? Rebuild the table with:
+**Manual (no login needed) — if you'd rather scaffold by hand:**
 ```bash
-python3 lc.py sync
+python3 lc.py new 1 two-sum easy   # create the folder (number, slug, difficulty)
+#   ...solve in solutions/0001-two-sum/solution.py, fill in notes.md...
+python3 lc.py done 1 two-sum       # rebuild table + commit + push
 ```
+
+**Other commands:**
+```bash
+python3 lc.py pull --list   # list your recent accepted problems
+python3 lc.py stats         # refresh your live leetcode.com counts (shown below)
+python3 lc.py sync          # rebuild the progress table only
+```
+
+### Enable code auto-pull (optional)
+`pull` gets the problem number/difficulty from your public profile with zero setup. To also pull your **actual submitted code**, give it your LeetCode login by creating a **git-ignored** `.lcsecret.json` in this folder:
+```json
+{ "leetcode_session": "PASTE_LEETCODE_SESSION", "csrf": "PASTE_csrftoken" }
+```
+Get both from your browser: DevTools → Application → Cookies → `https://leetcode.com` → copy `LEETCODE_SESSION` and `csrftoken`. (Or export them as `LEETCODE_SESSION` / `LEETCODE_CSRF` env vars.)
+
+> ⚠️ That cookie is basically your LeetCode password. It's git-ignored so it never leaves your machine, and it expires every couple of weeks — re-paste it when `pull` stops fetching code.
 
 ## Why this exists
 Tying the daily-commit habit to LeetCode means the streak *forces* real practice — the commit is a side effect of doing the work, not the goal. If a day is green here, I earned it.
